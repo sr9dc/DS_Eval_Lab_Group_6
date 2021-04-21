@@ -31,8 +31,27 @@ Part 3. Based on your exploration in Part 2, change the threshold using the func
 
 Part 4. Summarize your findings to include recommendations on how you might change each of the two kNN models based on the results. These recommendations might include gathering more data, adjusting the threshold or maybe that it's working fine at the current level and nothing should be done. Regardless of the outcome, what should we be aware of when these models are deployed? 
 
-Weather Dataset
 
+
+
+# Weather in Australia Dataset
+
+Our second dataset detailed weather findings in Australia. This dataset contains about 10 years of daily weather observations from many locations across Australia. RainTomorrow is the target variable to predict. It means -- did it rain the next day, Yes or No? This column is Yes if the rain for that day was 1mm or more.
+
+Observations were drawn from numerous weather stations. The daily observations are available from http://www.bom.gov.au/climate/data.
+An example of latest weather observations in Canberra: http://www.bom.gov.au/climate/dwo/IDCJDW2801.latest.shtml
+
+Definitions adapted from http://www.bom.gov.au/climate/dwo/IDCJDW0000.shtml
+Data source: http://www.bom.gov.au/climate/dwo/ and http://www.bom.gov.au/climate/data.
+
+Copyright Commonwealth of Australia 2010, Bureau of Meteorology.
+
+# Question
+Given the weather data of a day in a year, can a classifier be built to examine if it rains the subsequent day?
+
+## Data Cleaning
+
+We started by cleaning the data. The general process was to delete redundant categorical variables of direction, and to delete columns that had more than 30% of their data as NA's. Afterwards, the data was scaled and split into training and testing (80-20 ratio). 
 ```{r}
 
 set.seed(2001)
@@ -42,18 +61,19 @@ weatherAUS_data <- read.csv("weatherAUS.csv", #<- name of the data set.
                      stringsAsFactors = FALSE)#<- don't convert the numbers and characters to factors
 
 weatherAUS_data.cleaned <- weatherAUS_data
-weatherAUS_data.cleaned <- weatherAUS_data.cleaned[,c(-1,-2)]
-weatherAUS_data.cleaned <- weatherAUS_data.cleaned[, which(colMeans(is.na(weatherAUS_data.cleaned)) < 0.3)]
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[,c(-1,-2)] # Get rid of Date and Location 
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[, which(colMeans(is.na(weatherAUS_data.cleaned)) < 0.3)] # Delete columns with more than 30% na's
 weatherAUS_data.cleaned <- weatherAUS_data.cleaned[complete.cases(weatherAUS_data.cleaned), ]
-weatherAUS_data.cleaned <- weatherAUS_data.cleaned %>% select(-contains("Dir"))
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned %>% select(-contains("Dir")) # Get rid of Directional data
 
 weatherAUS_data.cleaned$RainToday <- recode(weatherAUS_data.cleaned$RainToday, 'No' = 0, 'Yes' = 1)
 weatherAUS_data.cleaned$RainTomorrow <- recode(weatherAUS_data.cleaned$RainTomorrow, 'No' = 0, 'Yes' = 1)
 
-correlations <- cor(weatherAUS_data.cleaned)
+correlations <- cor(weatherAUS_data.cleaned) # View correlations in case
 
-weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)] <- lapply(weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)],function(x) scale(x))
+weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)] <- lapply(weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)],function(x) scale(x)) # scale the data for better analysis
 
+# Create a shortened dataframe for caret analysis, since original dataframe is computationally expensive
 weatherAUS_data.shortened <- weatherAUS_data.cleaned[1:10000,]
 
 
@@ -62,6 +82,7 @@ split_index <- createDataPartition(weatherAUS_data.cleaned$RainTomorrow, p = .8,
                                   list = FALSE,#output of the data, we don't want a list
                                   times = 1)#the number of partitions to create we just want one
 
+# Create a split for a shortened training and testing split for computation
 split_index_shortened <- createDataPartition(weatherAUS_data.shortened$RainTomorrow, p = .8, # split 80% - 20% 
                                   list = FALSE,#output of the data, we don't want a list
                                   times = 1)#the number of partitions to create we just want one
@@ -70,19 +91,22 @@ split_index_shortened <- createDataPartition(weatherAUS_data.shortened$RainTomor
 #then we just pass the index to our dataset
 
 weatherAUS_data_train <- weatherAUS_data.cleaned[split_index,]
-dim(weatherAUS_data_train)
+dim(weatherAUS_data_train) # Confirm dimensions
 
 weatherAUS_data_test <- weatherAUS_data.cleaned[-split_index,]
-dim(weatherAUS_data_test)
+dim(weatherAUS_data_test) # Confirm dimensions
 
-
+# Shortened datasets
 weatherAUS_data_train.shortened <- weatherAUS_data.shortened[split_index_shortened,]
 weatherAUS_data_test.shortened <- weatherAUS_data.shortened[-split_index_shortened,]
-
-
-
 ```
+One point to note is that the dataset consists of over 100,000 points, making it computationally expensive to analyze as a whole. As a solution, a secondary shortened dataset was created to quickly find the optimal number of neighbors. Afterwards- with the chosen optimal K value, the original, 100,000+ point dataset, was run- saving excessive computational time.  
+
+## Caret analysis to quickly find optimal number of neighbors. 
+
+Using the R caret package, the optimal number of neighbors was found. 
 ```{r}
+# Run a quick 
 trctrl <- trainControl(method = "repeatedcv",
                        number = 10,
                        repeats = 3) # generic control to pass back into the knn mode using the cross validation method. 
@@ -97,6 +121,12 @@ weatherAUS_knn_caret <- train(RainTomorrow~.,
 weatherAUS_knn_caret # take a look
 
 ```
+The optimal value found by the algorithm was k=13. Since the accuracy and kappa values are better relative to the other k's, this k value was then used to create the model and generate a confusion matrix.
+
+
+## KNN Confusion Matrix Generation
+
+Using the optimal k value, a confusion matrix was generated.  
 ```{r}
 
 # KNN Work
@@ -109,10 +139,14 @@ weatherAUS_13NN <-  knn(train = weatherAUS_data_train[,-ncol(weatherAUS_data_tra
                prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
 length(weatherAUS_13NN)
 
-confusionMatrix(as.factor(weatherAUS_13NN), as.factor(weatherAUS_data_test$RainTomorrow), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+confusionMatrix(as.factor(weatherAUS_13NN), as.factor(weatherAUS_data_test$RainTomorrow), positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
 
 ```
-Here we see that the Accuracy is 84.52%, which is pretty good. The Kappa value is 47.39%
+The confusion matrix resulted in an accuracy of 84.51% and a Kappa of 0.4849, which was expected from the caret analysis. However, upon closer examination the sensitivity value is 47.37% compared to the specificity value of 95.02%- which means that the true positive rate is about as good as a random classifier. On the other hand the specificity value is high, which means that the model can predict when it doesn't rain better than when it does. This can definitely be improved on. 
+
+## Confirmation of Confusion Matrix
+
+As mentioned before we see that the Accuracy is 84.52% and that the Kappa value is 0.4849.
 
 To get the TPR and FPR, we used the following formulas. 
 
@@ -134,15 +168,18 @@ Next, we calculated the F1 Score
 F1 <- F1_Score(y_pred = weatherAUS_13NN, y_true = weatherAUS_data_test$RainTomorrow, positive = "1")
 sprintf("F1 of Model: %s", F1)
 ```
+The highest possible value of an F-score is 1.0, indicating perfect precision and recall, and the lowest possible value is 0, if either the precision or the recall is zero. In our model's case we performed better than average, though this can definitely be improved on.
 
-We then found the LogLoss
+## Log Loss
+Then the log loss value was then found to evaluate the performance of the KNN model.
+
 ```{r}
 #In order to use most evaluation packages it's just easier to have are predictions and targets in one place. 
 
 prob_knn <- tibble(weatherAUS_13NN, attributes(weatherAUS_13NN)$prob)
 prob_knn$prob <- if_else(prob_knn$weatherAUS_13NN == 0,
                          1-prob_knn$`attributes(weatherAUS_13NN)$prob`, prob_knn$`attributes(weatherAUS_13NN)$prob`) #### this is a example of converting the probabilities to the correct format.
-weatherAUS_eval1 <- data.frame(pred_class = weatherAUS_13NN, 
+weatherAUS_eval <- data.frame(pred_class = weatherAUS_13NN, 
                         pred_prob = prob_knn$prob, 
                         target = as.numeric(weatherAUS_data_test$RainTomorrow))
 
@@ -152,10 +189,16 @@ weatherAUS_roc <- performance(weatherAUS_pred, "tpr", "fpr")
 ll <- LogLoss(as.numeric(weatherAUS_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
 sprintf("LogLoss of Model: %s", ll)
 ```
-We then plotted the ROC AUC curve.
+The LogLoss of the Model was 0.749. This is a pretty low LogLoss value, but for any given model a lower log-loss value helps with predictions. 
+
+## ROC Curve
+The ROC Curve was then plotted to observe the threshold that could improve the KNN classifications. 
 ```{r}
 plot(weatherAUS_roc, colorize = TRUE)+abline(a=0, b= 1)
 ```
+Based on the curve, it looks like the model is generally a good fit, since the curve is well above the average line. Let's take a look at the AUC value to confirm this. 
+
+## AUC value
 ```{r}
 pred <- prediction(as.numeric(weatherAUS_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
 
@@ -165,6 +208,12 @@ KNN_perf_AUC <- performance(pred,"auc")
 
 paste("AUC: ", KNN_perf_AUC@y.values)
 ```
+In general, an AUC of 0.5 suggests no discrimination (i.e., ability to diagnose patients with and without the disease or condition based on the test), 0.7 to 0.8 is considered acceptable, 0.8 to 0.9 is considered excellent, and more than 0.9 is considered outstanding.
+
+For our model we have an excellent fit. Let's adjust the threshold to 0.4, where the ROC curve starts to cutoff, to see the results. 
+
+## Using Threshold
+
 Based on the ROC curve, we chose a threshold value of 0.40. 
 ```{r}
 adjust_thres <- function(x, y, z) {
@@ -173,9 +222,10 @@ adjust_thres <- function(x, y, z) {
   confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
 }
 
-adjust_thres(weatherAUS_eval$pred_prob, .40, as.factor(weatherAUS_data_test$RainTomorrow))
+adjust_thres(weatherAUS_eval$pred_prob, .4, as.factor(weatherAUS_data_test$RainTomorrow))
 ```
+The confusion matrix resulted in an accuracy of 84.18% and a Kappa of 0.5076, which indicates that some values may have shifted slightly in the total analysis. 
 
+In fact, the sensitivity value rose from 47.37% to 54.96%, and specificity value decreased negligibly from 95.02% to 92.46%- which means that the threshold definitely improved the KNN classification model. Another plus is that the F1 score increased from 0.5744 to 0.6052, which confirms that the KNN model has been optimized by the threshold function. This improves the overall true-positive rate of classifying that rain does fall on a subsequent day in Australia. While there still is a trade off between the true-positive rate and the true-negative rate, given the accuracy of the model, it is safe to say that the classification generally works.
 
-
-
+To help with classifying weather data in Australia in the future, the categorical variables that were removed, such as location, date, and directions, could possbibly be one-hot encoded to help with increasing the accuracy of prediction. While the cost would be that the size of the overall data structure would increase, it would likely help with improving the true positive rate of the model. A threshold measure at the end would still be necessary to evaluate and improve the classification, but as of now we have a working model that generates an acceptable true-positive true-negative ratio. 
