@@ -1,0 +1,298 @@
+---
+title: "eval lab"
+author: "Sai Rajuladevi, Andrew Porter, Izzy Shehan"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, cache=TRUE)
+```
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+library(class)
+library(caret)
+library(knitr)
+library(ROCR)
+library(MLmetrics)
+```
+
+#### step 0: research overview
+
+## {.tabset}
+
+### heart attack analysis
+
+#### step 1: data processing
+
+Preprocessing the dataset requires: 
+
+1. reading the data into the environment  
+2. verify that the data is clean (contains no missing variables or duplicates)
+3. scaling the numerical data (to ensure no attribute is weighted unfairly)
+
+```{r}
+heart_df<-read_csv("heart.csv")
+
+na_tf<-sum(is.na(heart_df)) # verify the data is clean
+table(duplicated(heart_df)) # check for duplicates
+heart_df<-heart_df%>%distinct()
+
+heart_df[, 1:(length(colnames(heart_df))-1)] <- lapply(heart_df[, 1:(length(colnames(heart_df))-1)],function(x) scale(x))
+```
+
+#### step 2: base rate calculation
+
+The base rate returns the probability of being able to correctly identify an individual having a greater risk of heart failure with no observational information. Calculated using the split between 1 (greater risk of heart attack, 54.3%) and 0 (less risk of heart attack, 45.69%), this value indicates we have a 54.3% chance of correctly identifying if the individual has a greater risk of heart attack. 
+
+```{r}
+table(heart_df$target)[2]/sum(table(heart_df$target))
+
+# the base rate is roughly 164/138, indicating that we have a 54.3% chance of correctly identifying an individual with a greater risk of heart failure when guessing with no information about the observation
+```
+
+#### step 3: column paring
+
+Since there are categorical attributes with no intrinsic order (*cp*, *rest_ecg*, *thal*), we can pare down the dataset and drop the columns. 
+
+```{r}
+heart_simplified<-heart_df%>%select(-c("cp","restecg", "thal"))
+```
+
+#### step 4: variable correlation verification
+
+Highly correlated variables signifies that there is data redundancy, a principle danger of which is artificial weight inflation and overfitting. The dimensionality of our data can be observed with the correlation map:
+
+```{r}
+cor_matrix<-cor(heart_simplified%>%select(-("target")))
+ggcorrplot(cor_matrix)
+```
+
+#### step 5: attribute removal
+
+Highly-correlating features can be defined as returning a correlation of above 0.7 and below -0.7 or correlating significantly with multiple variables; exploratory analysis of the correlation matrix shows no variable to be dropped. Reduced dimensionality allows for the encoding of information without data redundancy; our dataset, *heart_simplified*, can now be run through an initial kNN model. 
+
+#### step 6: train and test set generation
+
+Splitting our data into train and test sets allows us to validate the performance of the trained model. To verify the 80-20 data split, we divide the number of observations in the training set by the summed number of observations in the original set. 
+
+```{r}
+#6. Use the index to generate a train and test sets, then check the row counts to be safe.
+set.seed(1999)
+heart_train_rows = sample(1:nrow(heart_simplified),#<- from 1 to the number of #rows in the data set
+                 round(0.8 * nrow(heart_simplified), 0),  #<- multiply the number of rows by 0.8 and round 
+                 replace = FALSE)#<- don't replace the numbers
+
+length(heart_train_rows) / nrow(heart_simplified)
+heart_train = heart_simplified[heart_train_rows, ]
+heart_test = heart_simplified[-heart_train_rows, ]
+```
+
+#### step 7: knn baseline model training
+
+We can run an initial model analysis using k=3; from this, we can begin to analyze if the model is better than our base-rate and how we can tune performance. 
+
+```{r}
+#7 Train the classifier using k = 3, remember to set.seed so you can repeat the output and to use the labels as a vector for the class (not a index of the dataframe)
+col_n<-colnames(heart_simplified)
+
+set.seed(1999)
+heart_3NN <-  knn(train = heart_train[, (col_n[1:(length(col_n)-1)])],#<- training set cases
+               test = heart_test[, (col_n[1:(length(col_n)-1)])],    #<- test set cases
+               cl = heart_train$target,#<- category for true classification
+               k = 3,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE)
+```
+
+#### step 8: model output evaluation 
+
+```{r}
+#9  Run the confusion matrix function and comment on the model output
+confusionMatrix(as.factor(heart_3NN), as.factor(heart_test$target), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+```
+
+The confusionMatrix function allows us to analyze success metrics like sensitivity and specificity; our initial kNN model where k=3 has an accuracy of 78.69%, a sensitivity of 82.76%, and a specificity of 75%. 
+
+#### step 9: hyperparameter k tuning
+
+To ameliorate sensitivity and accuracy rates, we must tune our hyperparameter k and isolate the value that will return the best model performance without overfitting. To realize this, we can build kNN models that will test values of k from 1 to 21.
+
+```{r}
+#10 Run the "chooseK" function to find the perfect K, while using sapply() function on chooseK() to test k from 1 to 21 (only selecting the odd numbers), and set the train_set argument to 'commercial_train', val_set to 'commercial_test', train_class to the "label"   column of 'commercial_train', and val_class to the "label" column of 'commercial_test'. Label this  "knn_diff_k_com"
+
+chooseK<-function(k, train_set, val_set, train_class, val_class){
+  
+# Build knn with k neighbors considered.
+  set.seed(1999)
+  class_knn<-knn(train = train_set,    #<- training set cases
+                  test = val_set,       #<- test set cases
+                  cl = train_class,     #<- category for classification
+                  k = k,                #<- number of neighbors considered
+                  use.all = TRUE)       #<- control ties between class assignments
+                  conf_mat = table(class_knn, val_class)
+  
+  #accu = sum(conf_mat[row(conf_mat) == col(conf_mat)]) / sum(conf_mat)  
+  sen=conf_mat[2,2]/sum(conf_mat[,2])
+  cbind(k = k, sensitivity = sen)
+}
+
+knn_different_k<-sapply(seq(1, 21, by = 2),  #<- set k to be odd number from 1 to 21
+                         function(x) chooseK(x, 
+                                             train_set = heart_train[, (col_n[1:(length(col_n)-1)])],
+                                             val_set = heart_test[, (col_n[1:(length(col_n)-1)])],
+                                             train_class = heart_train$target,
+                                             val_class = heart_test$target))
+```
+
+#### step 10: compatibility conversion
+
+To visualize the kNN models against their sensitivity, we convert the matrix to a dataframe.
+
+```{r}
+#11 Create a dataframe so we can visualize the difference in accuracy based on K, convert the matrix to a dataframe
+
+knn_different_k<-tibble(k = knn_different_k[1,],
+                             sensitivity = knn_different_k[2,])
+```
+
+#### step 11: k visualization
+
+To isolate the ideal value of k, we can graph k against model sensivity:
+
+```{r}
+#12 Use ggplot to show the output and comment on the k to select.
+
+ggplot(knn_different_k,
+       aes(x = k, y = sensitivity)) +
+  geom_line(color = "pink", size = 1.5) +
+  geom_point(size = 3)
+```
+
+At k=7, the model shows diminishing returns, suggesting that our ideal value of k to return a high sensitivity and low overfit risk is 7. 
+
+#### step 12: tuned model rerun
+
+After isolating the ideal number of neighbors to be considered, we can run our model with its tuned parameters.
+
+```{r}
+#13 Rerun the model  with the k you selected, assuming it's different. 
+set.seed(1999)
+heart_7NN<-knn(train = heart_train[, (col_n[1:(length(col_n)-1)])],#<- training set cases
+               test = heart_test[, (col_n[1:(length(col_n)-1)])],    #<- test set cases
+               cl = heart_train$target,#<- category for true classification
+               k = 7,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE)
+```
+
+#### step 13: tuned model study
+
+```{r}
+#14 Use the confusion matrix function to measure the quality of the new model.
+confusionMatrix(as.factor(heart_7NN), as.factor(heart_test$target), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+```
+
+Our initial kNN model where k=3 has an accuracy of 78.69%, a sensitivity of 82.76%, and a specificity of 75%; in comparison, our tuned model of k=7 has an accuracy of 80.33% (+1.31%), a sensitivity of 89.66% (+6.90%), and a specificity of 71.88% (-3.12%). A kappa of .60 suggests our model is preforming moderately well. 
+
+The cost of mis-classification is higher for a type 2 error (false negative) than for a type 1 error (false positive): we'd rather over-identify individuals at greater risk of heart attack than under-identify individuals at lower risk of heart attack. As such, the rate of false negatives (classifying an individual at high risk of heart failure as one with low risk of heart failure) is critical to the success of the model. 
+
+The rate of false negatives is the complement of our sensitivity (true positive rate): 
+
+```{r}
+fnr<-1-0.8966
+fnr
+```
+
+The rate of false positives is the complement of our specificity (true negative rate):
+
+```{r}
+fpr<-1-0.7188
+fpr
+```
+
+Since our model was tuned from a type 2 error lens, it realizes a much lower rate of false negatives than false positives. The context of the dataset allows us to prioritize sensitivity as an evaluation metric.
+
+#### step 14: more metric analysis 
+
+To maximize our sensitivity, we can analyze the decision threshold of our model as a dynamic parameter. First, we can provide some base measures to evaluate the balance of our model (log loss and F1). 
+
+Log-loss is a measure of how far the prediction probability is from the actual value; the higher the log-loss value from 0, the more disparate the prediction probability.   
+
+```{r}
+prob_knn <- tibble(heart_7NN, attributes(heart_7NN)$prob)
+prob_knn$prob <- if_else(prob_knn$heart_7NN == 0,
+                         1-prob_knn$`attributes(heart_7NN)$prob`, prob_knn$`attributes(heart_7NN)$prob`)
+
+heart_eval<-data.frame(pred_class = heart_7NN, 
+                        pred_prob = prob_knn$prob, 
+                        target = as.numeric(heart_test$target))
+
+paste("log-loss", LogLoss(as.numeric(heart_eval$pred_prob), as.numeric(heart_test$target)))
+```
+
+Our relatively high log-loss value suggests that the model's prediction probabilities are relatively far from the classifier target values (either through mis-classification or low model confidence).
+
+F1 is a measure of the harmonic balance between precision and recall; an F1 score of 1 is considered perfect.
+
+```{r}
+paste("f1", F1_Score(as.numeric(heart_eval$pred_prob), as.numeric(heart_test$target)))
+```
+
+While our F1 score is relatively low compared to the ideal value, F1 works best for uneven class distributions and balanced precision-recall. Since we our prioritizing sensitivity to minimize the false negative rate (and our target distribution is fairly even), we are less concerned with the overall balance of metrics. 
+
+To adjust the threshold value of our model, we first plot a ROC curve (the performance of a binary classifier against different thresholds): 
+
+```{r}
+heart_pred <- prediction(heart_eval$pred_prob, heart_eval$target)
+heart_roc <- performance(heart_pred, "tpr", "fpr")
+plot(heart_roc, colorize = TRUE)
+```
+
+The shape of the ROC curve is exponential and passes through the top left corner of the graph, indicating that the model has significant predictave power. This hypothesis is verified with the AUC score (the probability that randomly-selected samples are correctly ordered by prediction probability):
+
+```{r}
+auc_value <- performance(heart_pred, 'auc')
+paste("auc", auc_value@y.values)
+```
+
+The higher the AUC score (0-1), the better the classifier; our relatively strong AUC score indicates our model is fairly high-preforming. 
+
+From ROC curve we can identify a threshold that maximizes the true positive rate while holding the false positive rate within reasonable constraints; at a threshold value of .45, we see a high true positive rate while the false positive rate is fairly controlled.  
+
+```{r}
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=test_outcome
+  thres <- as.factor(ifelse(x > y, 1,0))
+  confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
+}
+
+
+adjust_thres(heart_eval$pred_prob, .45, as.factor(heart_eval$target))
+```
+
+
+Running our model on our modified threshold of y=0.45 shows identical metrics to the previous model; this is understandable, as the ideal threshold is not far from the default of 0.5. To show that the prediction probability split is not high, we can adjust the threshold to one that specifically maximizes the sensitivity with no regard to specificity (0.3):
+
+```{r}
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=test_outcome
+  thres <- as.factor(ifelse(x > y, 1,0))
+  confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
+}
+
+
+adjust_thres(heart_eval$pred_prob, .3, as.factor(heart_eval$target))
+```
+
+Conclusively, this threshold increases the specificity while significantly impacting accuracy, kappa, and specificity. We suggest that the default threshold is optimal for maintaining some balance between true positive and true negative classification rates. 
+
+#### step 15: conclusion
+
+From our mis-classification analysis, we see that our model is fairly volatile across all its metrics. While high-preforming for sensitivity, it sacrifices balance to counteract its high cost of type 2 errors. This can be partially attributed to the size of the dataset: while evenly distributed between the binary target, there are only 303 observations for the model to cluster. To improve the model, we suggest aggregating more data to realize closer predictive probabilities and to allow more room for researchers to analyze and prioritize metrics other than specificity. 
+
+### australian rain analysis
