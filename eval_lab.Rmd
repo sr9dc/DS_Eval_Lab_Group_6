@@ -31,103 +31,11 @@ Part 3. Based on your exploration in Part 2, change the threshold using the func
 
 Part 4. Summarize your findings to include recommendations on how you might change each of the two kNN models based on the results. These recommendations might include gathering more data, adjusting the threshold or maybe that it's working fine at the current level and nothing should be done. Regardless of the outcome, what should we be aware of when these models are deployed? 
 
-
-```{r}
-heart_data <- read.csv("heart.csv", #<- name of the data set.
-                     check.names = FALSE, #<- don't change column names.
-                     stringsAsFactors = FALSE)#<- don't convert the numbers and characters to factors.
-
-heart_drops <- c("cp","thal","restecg","slope") # categorical variables that aren't defined well enough to identify
-
-heart_data.cleaned <- heart_data[ , !(names(heart_data) %in% heart_drops)]
-heart_data.cleaned[,-ncol(heart_data.cleaned)]<- lapply(heart_data.cleaned[,-ncol(heart_data.cleaned)], function(x) scale(x))
-
-set.seed(1980)# this will allow you to replicate the outcomes of randomized process
-
-#caret function the will allow us to divide the data into test and train, it will randomly assign rows into each category while maintaining the relative balance (0 and 1s) of the target variable. 
-split_index <- createDataPartition(heart_data.cleaned$target, p = .8, # split
-                                  list = FALSE,#output of the data, we don't want a list
-                                  times = 1)#the number of partitions to create we just want one
-
-
-#then we just pass the index to our dataset
-
-heart_data_train <- heart_data.cleaned[split_index,]
-dim(heart_data_train)
-
-
-heart_data_test <- heart_data.cleaned[-split_index,]
-dim(heart_data_test)
-```
-```{r}
-trctrl <- trainControl(method = "repeatedcv",
-                       number = 10,
-                       repeats = 3) # generic control to pass back into the knn mode using the cross validation method. 
-heart_data_train$target <- as.factor(heart_data_train$target)
-
-heart_knn_caret <- train(target~.,
-                  data = heart_data_train,
-                  method="knn",
-                  tuneLength=5,
-                  trControl= trctrl,#cv method above, will select the optimal K
-                  preProcess="scale") # already did this but helpful reference
-heart_knn_caret # take a look
-```
-
-
-```{r}
-# KNN Work
-
-# Therefore we chose a value that balanced sensitivity and accuracy, k=13
-heart_13NN <-  knn(train = heart_data_train[,-ncol(heart_data_train)],#<- training set cases
-               test = heart_data_test[,-ncol(heart_data_test)],    #<- test set cases
-               cl = heart_data_train$target,#<- category for true classification
-               k = 13,#<- number of neighbors considered
-               use.all = TRUE,
-               prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
-length(heart_13NN)
-
-confusionMatrix(as.factor(heart_13NN), as.factor(heart_data_test$target), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
-heart_13NN
-
-```
-```{r}
-#In order to use most evaluation packages it's just easier to have are predictions and targets in one place. 
-
-heart_13NN_eval <- data.frame(pred_class=heart_13NN, pred_prob=1-attr(heart_13NN,"prob"),target=as.numeric(heart_data_test$target))
-
-attr(heart_13NN,"prob")
-
-str(heart_13NN_eval)
-
-LogLoss(as.numeric(heart_13NN_eval$pred_prob), as.numeric(heart_data_test$target))
-
-pred <- prediction(heart_13NN_eval$pred_prob,heart_13NN_eval$target)
-
-F1_Score(y_pred = heart_13NN, y_true = heart_data_test$target, positive = "1")
-
-knn_perf <- performance(pred,"tpr","fpr")
-
-plt <- plot(knn_perf, colorize=TRUE) + abline(a=0, b= 1)
-
-KNN_perf_AUC <- performance(pred,"auc")
-
-print(KNN_perf_AUC@y.values)
-
-```
-
-
-
-
-
-
-
-
-
+Weather Dataset
 
 ```{r}
 
-set.seed(103)
+set.seed(2001)
 
 weatherAUS_data <- read.csv("weatherAUS.csv", #<- name of the data set.
                      check.names = FALSE, #<- don't change column names.
@@ -169,10 +77,8 @@ dim(weatherAUS_data_test)
 
 
 weatherAUS_data_train.shortened <- weatherAUS_data.shortened[split_index_shortened,]
-dim(weatherAUS_data_train)
-
 weatherAUS_data_test.shortened <- weatherAUS_data.shortened[-split_index_shortened,]
-dim(weatherAUS_data_test)
+
 
 
 ```
@@ -206,33 +112,69 @@ length(weatherAUS_13NN)
 confusionMatrix(as.factor(weatherAUS_13NN), as.factor(weatherAUS_data_test$RainTomorrow), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
 
 ```
+Here we see that the Accuracy is 84.52%, which is pretty good. The Kappa value is 47.39%
+
+To get the TPR and FPR, we used the following formulas. 
+
+* tpr = tp / (tp + fn)
+* fpr = fp / (fp + tn)
+
+
+```{r}
+tpr <- 2356/(2356+2615)
+sprintf("TPR Calculated: %s", tpr)
+```
+```{r}
+fpr <- 873/(873 + 16690)
+sprintf("FPR Calculated: %s", fpr)
+```
+
+Next, we calculated the F1 Score
+```{r}
+F1 <- F1_Score(y_pred = weatherAUS_13NN, y_true = weatherAUS_data_test$RainTomorrow, positive = "1")
+sprintf("F1 of Model: %s", F1)
+```
+
+We then found the LogLoss
 ```{r}
 #In order to use most evaluation packages it's just easier to have are predictions and targets in one place. 
 
-weatherAUS_13NN
+prob_knn <- tibble(weatherAUS_13NN, attributes(weatherAUS_13NN)$prob)
+prob_knn$prob <- if_else(prob_knn$weatherAUS_13NN == 0,
+                         1-prob_knn$`attributes(weatherAUS_13NN)$prob`, prob_knn$`attributes(weatherAUS_13NN)$prob`) #### this is a example of converting the probabilities to the correct format.
+weatherAUS_eval1 <- data.frame(pred_class = weatherAUS_13NN, 
+                        pred_prob = prob_knn$prob, 
+                        target = as.numeric(weatherAUS_data_test$RainTomorrow))
 
-weatherAUS_13NN_eval <- data.frame(pred_class=weatherAUS_13NN, pred_prob=1-attr(weatherAUS_13NN,"prob"),target=as.numeric(weatherAUS_data_test$RainTomorrow))
+weatherAUS_pred <- prediction(weatherAUS_eval$pred_prob, weatherAUS_eval$target)
+weatherAUS_roc <- performance(weatherAUS_pred, "tpr", "fpr")
 
-
-str(weatherAUS_13NN_eval)
-
-LogLoss(as.numeric(weatherAUS_13NN_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
-
-
-pred <- prediction(as.numeric(weatherAUS_13NN_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
-
-F1_Score(y_pred = weatherAUS_13NN, y_true = weatherAUS_data_test$RainTomorrow, positive = "1")
-
+ll <- LogLoss(as.numeric(weatherAUS_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
+sprintf("LogLoss of Model: %s", ll)
+```
+We then plotted the ROC AUC curve.
+```{r}
+plot(weatherAUS_roc, colorize = TRUE)+abline(a=0, b= 1)
+```
+```{r}
+pred <- prediction(as.numeric(weatherAUS_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
 
 knn_perf <- performance(pred,"tpr","fpr")
 
-plt <- plot(knn_perf, colorize=TRUE) + abline(a=0, b= 1)
-
 KNN_perf_AUC <- performance(pred,"auc")
 
-print(KNN_perf_AUC@y.values)
+paste("AUC: ", KNN_perf_AUC@y.values)
 ```
+Based on the ROC curve, we chose a threshold value of 0.40. 
+```{r}
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=test_outcome
+  thres <- as.factor(ifelse(x > y, 1,0))
+  confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
+}
 
+adjust_thres(weatherAUS_eval$pred_prob, .40, as.factor(weatherAUS_data_test$RainTomorrow))
+```
 
 
 
