@@ -82,7 +82,7 @@ heart_knn_caret # take a look
 heart_13NN <-  knn(train = heart_data_train[,-ncol(heart_data_train)],#<- training set cases
                test = heart_data_test[,-ncol(heart_data_test)],    #<- test set cases
                cl = heart_data_train$target,#<- category for true classification
-               k = 11,#<- number of neighbors considered
+               k = 13,#<- number of neighbors considered
                use.all = TRUE,
                prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
 length(heart_13NN)
