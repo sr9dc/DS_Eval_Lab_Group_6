@@ -21,7 +21,17 @@ library(ROCR)
 library(MLmetrics)
 ```
 
+<br>
+
 #### step 0: research overview
+
+To become more familiar with evaluation metrics, we decided to tune a kNN classifier for 2 datasets: 1 aggregating heart failure metrics, and 1 aggregating Australian weather metrics. From these datasets, we isolated 2 questions of interest to explore:
+
+1. *can we predict when someone is at high risk of heart failure?*  
+2. *given the weather data of a specific day in Australia, can we predict if it will rain the next day?  *
+
+These exploratory questions will guide comprehensive analysis of 2 end-to-end models.
+
 
 ## {.tabset}
 
@@ -39,8 +49,8 @@ Preprocessing the dataset requires:
 heart_df<-read_csv("heart.csv")
 
 na_tf<-sum(is.na(heart_df)) # verify the data is clean
-table(duplicated(heart_df)) # check for duplicates
-heart_df<-heart_df%>%distinct()
+dup<-table(duplicated(heart_df)) # check for duplicates
+heart_df<-heart_df%>%distinct() # since there was 1 duplicate, we create a new dataset from the unique rows 
 
 heart_df[, 1:(length(colnames(heart_df))-1)] <- lapply(heart_df[, 1:(length(colnames(heart_df))-1)],function(x) scale(x))
 ```
@@ -217,6 +227,8 @@ fpr
 
 Since our model was tuned from a type 2 error lens, it realizes a much lower rate of false negatives than false positives. The context of the dataset allows us to prioritize sensitivity as an evaluation metric.
 
+<br> 
+
 #### step 14: more metric analysis 
 
 To maximize our sensitivity, we can analyze the decision threshold of our model as a dynamic parameter. First, we can provide some base measures to evaluate the balance of our model (log loss and F1). 
@@ -232,7 +244,7 @@ heart_eval<-data.frame(pred_class = heart_7NN,
                         pred_prob = prob_knn$prob, 
                         target = as.numeric(heart_test$target))
 
-paste("log-loss", LogLoss(as.numeric(heart_eval$pred_prob), as.numeric(heart_test$target)))
+paste("log-loss=", LogLoss(as.numeric(heart_eval$pred_prob), as.numeric(heart_test$target)))
 ```
 
 Our relatively high log-loss value suggests that the model's prediction probabilities are relatively far from the classifier target values (either through mis-classification or low model confidence).
@@ -240,10 +252,10 @@ Our relatively high log-loss value suggests that the model's prediction probabil
 F1 is a measure of the harmonic balance between precision and recall; an F1 score of 1 is considered perfect.
 
 ```{r}
-paste("f1", F1_Score(as.numeric(heart_eval$pred_prob), as.numeric(heart_test$target)))
+paste("f1=", F1_Score(as.numeric(heart_eval$pred_prob), as.numeric(heart_test$target)))
 ```
 
-While our F1 score is relatively low compared to the ideal value, F1 works best for uneven class distributions and balanced precision-recall. Since we our prioritizing sensitivity to minimize the false negative rate (and our target distribution is fairly even), we are less concerned with the overall balance of metrics. 
+While our F1 score is relatively low compared to the ideal value, F1 works best for uneven class distributions and balanced precision-recall. Since we are prioritizing sensitivity to minimize the false negative rate (and our target distribution is fairly even), we are less concerned with the overall balance of metrics. 
 
 To adjust the threshold value of our model, we first plot a ROC curve (the performance of a binary classifier against different thresholds): 
 
@@ -257,7 +269,7 @@ The shape of the ROC curve is exponential and passes through the top left corner
 
 ```{r}
 auc_value <- performance(heart_pred, 'auc')
-paste("auc", auc_value@y.values)
+paste("auc=", auc_value@y.values)
 ```
 
 The higher the AUC score (0-1), the better the classifier; our relatively strong AUC score indicates our model is fairly high-preforming. 
@@ -289,10 +301,221 @@ adjust_thres <- function(x, y, z) {
 adjust_thres(heart_eval$pred_prob, .3, as.factor(heart_eval$target))
 ```
 
-Conclusively, this threshold increases the specificity while significantly impacting accuracy, kappa, and specificity. We suggest that the default threshold is optimal for maintaining some balance between true positive and true negative classification rates. 
+Conclusively, this threshold increases the specificity while significantly impacting accuracy, kappa, and specificity. We suggest that the default threshold is ideal for maintaining some balance between true positive and true negative classification rates. 
+
+<br> 
 
 #### step 15: conclusion
 
-From our mis-classification analysis, we see that our model is fairly volatile across all its metrics. While high-preforming for sensitivity, it sacrifices balance to counteract its high cost of type 2 errors. This can be partially attributed to the size of the dataset: while evenly distributed between the binary target, there are only 303 observations for the model to cluster. To improve the model, we suggest aggregating more data to realize closer predictive probabilities and to allow more room for researchers to analyze and prioritize metrics other than specificity. 
+From our mis-classification analysis, we see that our model is fairly volatile across all its metrics. While high-preforming for sensitivity, it sacrifices balance to counteract its high cost of type 2 errors. This can be partially attributed to the size of the dataset: while evenly distributed between the binary target, there are only 303 observations for the model to cluster. To improve the model, we suggest aggregating more data to realize closer predictive probabilities and to allow more room for researchers to analyze and prioritize metrics other than specificity. Furthermore, multi-factor categorical variables can be encoded to provide the model with more data information. 
+
+<br>
 
 ### australian rain analysis
+
+#### data cleaning
+
+We started by cleaning the data. The general process was to delete redundant categorical variables of direction, and to delete columns that had more than 30% of their data as NA's. Afterwards, the data was scaled and split into training and testing (80-20 ratio). 
+
+```{r}
+
+set.seed(2001)
+
+weatherAUS_data <- read.csv("weatherAUS.csv", #<- name of the data set.
+                     check.names = FALSE, #<- don't change column names.
+                     stringsAsFactors = FALSE)#<- don't convert the numbers and characters to factors
+
+weatherAUS_data.cleaned <- weatherAUS_data
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[,c(-1,-2)] # Get rid of Date and Location 
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[, which(colMeans(is.na(weatherAUS_data.cleaned)) < 0.3)] # Delete columns with more than 30% na's
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[complete.cases(weatherAUS_data.cleaned), ]
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned %>% select(-contains("Dir")) # Get rid of Directional data
+
+weatherAUS_data.cleaned$RainToday <- recode(weatherAUS_data.cleaned$RainToday, 'No' = 0, 'Yes' = 1)
+weatherAUS_data.cleaned$RainTomorrow <- recode(weatherAUS_data.cleaned$RainTomorrow, 'No' = 0, 'Yes' = 1)
+
+correlations <- cor(weatherAUS_data.cleaned) # View correlations in case
+
+weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)] <- lapply(weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)],function(x) scale(x)) # scale the data for better analysis
+
+# Create a shortened dataframe for caret analysis, since original dataframe is computationally expensive
+weatherAUS_data.shortened <- weatherAUS_data.cleaned[1:10000,]
+
+
+#caret function the will allow us to divide the data into test and train, it will randomly assign rows into each category while maintaining the relative balance (0 and 1s) of the target variable. 
+split_index <- createDataPartition(weatherAUS_data.cleaned$RainTomorrow, p = .8, # split 80% - 20% 
+                                  list = FALSE,#output of the data, we don't want a list
+                                  times = 1)#the number of partitions to create we just want one
+
+# Create a split for a shortened training and testing split for computation
+split_index_shortened <- createDataPartition(weatherAUS_data.shortened$RainTomorrow, p = .8, # split 80% - 20% 
+                                  list = FALSE,#output of the data, we don't want a list
+                                  times = 1)#the number of partitions to create we just want one
+
+
+#then we just pass the index to our dataset
+
+weatherAUS_data_train <- weatherAUS_data.cleaned[split_index,]
+dim(weatherAUS_data_train) # Confirm dimensions
+
+weatherAUS_data_test <- weatherAUS_data.cleaned[-split_index,]
+dim(weatherAUS_data_test) # Confirm dimensions
+
+# Shortened datasets
+weatherAUS_data_train.shortened <- weatherAUS_data.shortened[split_index_shortened,]
+weatherAUS_data_test.shortened <- weatherAUS_data.shortened[-split_index_shortened,]
+```
+
+One point to note is that the dataset consists of over 100,000 points, making it computationally expensive to analyze as a whole. As a solution, a secondary shortened dataset was created to quickly find the optimal number of neighbors. Afterwards- with the chosen optimal K value, the original, 100,000+ point dataset, was run- saving excessive computational time.  
+
+#### caret analysis to quickly find optimal number of neighbors. 
+
+Using the R caret package, the optimal number of neighbors was found. 
+```{r}
+# Run a quick 
+trctrl <- trainControl(method = "repeatedcv",
+                       number = 10,
+                       repeats = 3) # generic control to pass back into the knn mode using the cross validation method. 
+weatherAUS_data_train.shortened$RainTomorrow <- as.factor(weatherAUS_data_train.shortened$RainTomorrow)
+
+weatherAUS_knn_caret <- train(RainTomorrow~.,
+                  data = weatherAUS_data_train.shortened,
+                  method="knn",
+                  tuneLength=5,
+                  trControl= trctrl,#cv method above, will select the optimal K
+                  preProcess="scale") # already did this but helpful reference
+weatherAUS_knn_caret # take a look
+
+```
+
+The optimal value found by the algorithm was k=13. Since the accuracy and kappa values are better relative to the other k's, this k value was then used to create the model and generate a confusion matrix.
+
+#### kNN confusion matrix generation
+
+Using the optimal k value, a confusion matrix was generated.  
+```{r}
+
+# KNN Work
+
+weatherAUS_13NN <-  knn(train = weatherAUS_data_train[,-ncol(weatherAUS_data_train)],#<- training set cases
+               test = weatherAUS_data_test[,-ncol(weatherAUS_data_test)],    #<- test set cases
+               cl = weatherAUS_data_train[,"RainTomorrow"],#<- category for true classification
+               k = 13,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
+length(weatherAUS_13NN)
+
+confusionMatrix(as.factor(weatherAUS_13NN), as.factor(weatherAUS_data_test$RainTomorrow), positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
+
+```
+The confusion matrix resulted in an accuracy of 84.51% and a Kappa of 0.4849, which was expected from the caret analysis. However, upon closer examination the sensitivity value is 47.37% compared to the specificity value of 95.02%- which means that the true positive rate is about as good as a random classifier. On the other hand the specificity value is high, which means that the model can predict when it doesn't rain better than when it does. This can definitely be improved on. 
+
+#### confirmation of confusion matrix
+
+As mentioned before we see that the Accuracy is 84.52% and that the Kappa value is 0.4849.
+
+To get the TPR and FPR, we used the following formulas. 
+
+* tpr = tp / (tp + fn)
+* fpr = fp / (fp + tn)
+
+
+```{r}
+tpr <- 2356/(2356+2615)
+sprintf("TPR Calculated: %s", tpr)
+```
+```{r}
+fpr <- 873/(873 + 16690)
+sprintf("FPR Calculated: %s", fpr)
+```
+
+Next, we calculated the F1 Score
+```{r}
+F1 <- F1_Score(y_pred = weatherAUS_13NN, y_true = weatherAUS_data_test$RainTomorrow, positive = "1")
+sprintf("F1 of Model: %s", F1)
+```
+The highest possible value of an F-score is 1.0, indicating perfect precision and recall, and the lowest possible value is 0, if either the precision or the recall is zero. In our model's case we performed better than average, though this can definitely be improved on.
+
+#### log-loss
+
+Then the log loss value was then found to evaluate the performance of the KNN model.
+
+```{r}
+#In order to use most evaluation packages it's just easier to have are predictions and targets in one place. 
+
+prob_knn <- tibble(weatherAUS_13NN, attributes(weatherAUS_13NN)$prob)
+prob_knn$prob <- if_else(prob_knn$weatherAUS_13NN == 0,
+                         1-prob_knn$`attributes(weatherAUS_13NN)$prob`, prob_knn$`attributes(weatherAUS_13NN)$prob`) #### this is a example of converting the probabilities to the correct format.
+weatherAUS_eval <- data.frame(pred_class = weatherAUS_13NN, 
+                        pred_prob = prob_knn$prob, 
+                        target = as.numeric(weatherAUS_data_test$RainTomorrow))
+
+weatherAUS_pred <- prediction(weatherAUS_eval$pred_prob, weatherAUS_eval$target)
+weatherAUS_roc <- performance(weatherAUS_pred, "tpr", "fpr")
+
+ll <- LogLoss(as.numeric(weatherAUS_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
+sprintf("LogLoss of Model: %s", ll)
+```
+The LogLoss of the Model was 0.749. This is a pretty low LogLoss value, but for any given model a lower log-loss value helps with predictions. 
+
+#### ROC curve
+
+The ROC Curve was then plotted to observe the threshold that could improve the KNN classifications. 
+```{r}
+plot(weatherAUS_roc, colorize = TRUE)+abline(a=0, b= 1)
+```
+Based on the curve, it looks like the model is generally a good fit, since the curve is well above the average line. Let's take a look at the AUC value to confirm this. 
+
+#### AUC value
+
+```{r}
+pred <- prediction(as.numeric(weatherAUS_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
+
+knn_perf <- performance(pred,"tpr","fpr")
+
+KNN_perf_AUC <- performance(pred,"auc")
+
+paste("AUC: ", KNN_perf_AUC@y.values)
+```
+In general, an AUC of 0.5 suggests no discrimination (i.e., ability to diagnose patients with and without the disease or condition based on the test), 0.7 to 0.8 is considered acceptable, 0.8 to 0.9 is considered excellent, and more than 0.9 is considered outstanding.
+
+For our model we have an excellent fit. Let's adjust the threshold to 0.4, where the ROC curve starts to cutoff, to see the results. 
+
+#### adjusting the threshold and conclusion
+
+Based on the ROC curve, we chose a threshold value of 0.40. 
+```{r}
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=test_outcome
+  thres <- as.factor(ifelse(x > y, 1,0))
+  confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
+}
+
+adjust_thres(weatherAUS_eval$pred_prob, .4, as.factor(weatherAUS_data_test$RainTomorrow))
+```
+The confusion matrix resulted in an accuracy of 84.18% and a Kappa of 0.5076, which indicates that some values may have shifted slightly in the total analysis. 
+
+In fact, the sensitivity value rose from 47.37% to 54.96%, and specificity value decreased negligibly from 95.02% to 92.46%- which means that the threshold definitely improved the KNN classification model. Another plus is that the F1 score increased from 0.5744 to 0.6052, which confirms that the KNN model has been optimized by the threshold function. This improves the overall true-positive rate of classifying that rain does fall on a subsequent day in Australia. While there still is a trade off between the true-positive rate and the true-negative rate, given the accuracy of the model, it is safe to say that the classification generally works.
+
+To help with classifying weather data in Australia in the future, the categorical variables that were removed, such as location, date, and directions, could possbibly be one-hot encoded to help with increasing the accuracy of prediction. While the cost would be that the size of the overall data structure would increase, it would likely help with improving the true positive rate of the model. A threshold measure at the end would still be necessary to evaluate and improve the classification, but as of now we have a working model that generates an acceptable true-positive true-negative ratio. 
+
+
+### sources
+
+Our first dataset detailed metrics on heart disease. This dataset contains 14 of the original 76 attributes. *target* is the target value to predict, where 1 = a higher risk of heart failure, 0 = a lower risk of heart failure.
+
+Data Source: https://archive.ics.uci.edu/ml/datasets/Heart+Disease  
+Kaggle Link: https://www.kaggle.com/rashikrahmanpritom/heart-attack-analysis-prediction-dataset  
+
+<br>
+
+Our second dataset detailed weather findings in Australia. This dataset contains about 10 years of daily weather observations from many locations across Australia. *RainTomorrow* is the target variable to predict. It means -- did it rain the next day, Yes or No? This column is Yes if the rain for that day was 1mm or more.
+
+Observations were drawn from numerous weather stations. The daily observations are available from http://www.bom.gov.au/climate/data.
+
+An example of latest weather observations in Canberra: http://www.bom.gov.au/climate/dwo/IDCJDW2801.latest.shtml
+
+Definitions adapted from http://www.bom.gov.au/climate/dwo/IDCJDW0000.shtml
+Data source: http://www.bom.gov.au/climate/dwo/ and http://www.bom.gov.au/climate/data.
+
+Copyright Commonwealth of Australia 2010, Bureau of Meteorology.
