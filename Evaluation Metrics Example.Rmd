@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(caret)
-setwd("/cloud/project/eval")
+
 
 ```
 
@@ -152,7 +152,7 @@ table(loan_eval, test$outcome)#essential the confusion matrix, though we can mak
 
 
 confusionMatrix(loan_eval, test$outcome, positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")#change to everything
-
+# 
 #from the above we can see our True Positive Rate or sensitivity is quite good @ 88%, False Positive Rate (1-Specificity) is also not terrible ~ @ 27%, we want this to be low.(Subject to change) 
 
 
@@ -163,7 +163,6 @@ adjust_thres <- function(x, y, z) {
   thres <- as.factor(ifelse(x > y, 1,0))
   confusionMatrix(thres, z, positive = "1", dnn=c("Prediction", "Actual"), mode = "everything")
 }
-
 
 adjust_thres(loan_eval_prob$`1`,.30, test$outcome) #Not much changes here because of the high probability splits of the data outcomes. Let's take a closer look. We can see that the algo isn't marginally mis-classifying these rows, it's very confidently wrong. Which likely means that there's too much emphasis being placed on too small a number of variables, principally the funfetti variable. 
 

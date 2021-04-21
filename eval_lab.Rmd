@@ -7,6 +7,15 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(knitr)
+library(caret)
+library(class)
+library(dplyr)
+#install.packages("MLmetrics")
+library(MLmetrics)
+#install.packages("ROCR")
+library(ROCR)
 ```
 
 Throughout your early career as a data scientist you've built complex visualizations, explored NBA talent, minded text on Data Science news and gained a better understanding how to create commercials with great success but you've suddenly realized you need to enhance your ability to assess the models you are building. As the most important part about understanding any machine learning model (any model) is understanding it's weakness or better said it's vulnerabilities. 
@@ -24,8 +33,207 @@ Part 4. Summarize your findings to include recommendations on how you might chan
 
 
 ```{r}
+heart_data <- read.csv("heart.csv", #<- name of the data set.
+                     check.names = FALSE, #<- don't change column names.
+                     stringsAsFactors = FALSE)#<- don't convert the numbers and characters to factors.
 
+heart_drops <- c("cp","thal","restecg","slope") # categorical variables that aren't defined well enough to identify
+
+heart_data.cleaned <- heart_data[ , !(names(heart_data) %in% heart_drops)]
+heart_data.cleaned[,-ncol(heart_data.cleaned)]<- lapply(heart_data.cleaned[,-ncol(heart_data.cleaned)], function(x) scale(x))
+
+set.seed(1980)# this will allow you to replicate the outcomes of randomized process
+
+#caret function the will allow us to divide the data into test and train, it will randomly assign rows into each category while maintaining the relative balance (0 and 1s) of the target variable. 
+split_index <- createDataPartition(heart_data.cleaned$target, p = .8, # split
+                                  list = FALSE,#output of the data, we don't want a list
+                                  times = 1)#the number of partitions to create we just want one
+
+
+#then we just pass the index to our dataset
+
+heart_data_train <- heart_data.cleaned[split_index,]
+dim(heart_data_train)
+
+
+heart_data_test <- heart_data.cleaned[-split_index,]
+dim(heart_data_test)
+```
+```{r}
+trctrl <- trainControl(method = "repeatedcv",
+                       number = 10,
+                       repeats = 3) # generic control to pass back into the knn mode using the cross validation method. 
+heart_data_train$target <- as.factor(heart_data_train$target)
+
+heart_knn_caret <- train(target~.,
+                  data = heart_data_train,
+                  method="knn",
+                  tuneLength=5,
+                  trControl= trctrl,#cv method above, will select the optimal K
+                  preProcess="scale") # already did this but helpful reference
+heart_knn_caret # take a look
+```
+
+
+```{r}
+# KNN Work
+
+# Therefore we chose a value that balanced sensitivity and accuracy, k=13
+heart_13NN <-  knn(train = heart_data_train[,-ncol(heart_data_train)],#<- training set cases
+               test = heart_data_test[,-ncol(heart_data_test)],    #<- test set cases
+               cl = heart_data_train$target,#<- category for true classification
+               k = 11,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
+length(heart_13NN)
+
+confusionMatrix(as.factor(heart_13NN), as.factor(heart_data_test$target), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+heart_13NN
+
+```
+```{r}
+#In order to use most evaluation packages it's just easier to have are predictions and targets in one place. 
+
+heart_13NN_eval <- data.frame(pred_class=heart_13NN, pred_prob=1-attr(heart_13NN,"prob"),target=as.numeric(heart_data_test$target))
+
+attr(heart_13NN,"prob")
+
+str(heart_13NN_eval)
+
+LogLoss(as.numeric(heart_13NN_eval$pred_prob), as.numeric(heart_data_test$target))
+
+pred <- prediction(heart_13NN_eval$pred_prob,heart_13NN_eval$target)
+
+F1_Score(y_pred = heart_13NN, y_true = heart_data_test$target, positive = "1")
+
+knn_perf <- performance(pred,"tpr","fpr")
+
+plt <- plot(knn_perf, colorize=TRUE) + abline(a=0, b= 1)
+
+KNN_perf_AUC <- performance(pred,"auc")
+
+print(KNN_perf_AUC@y.values)
+
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+set.seed(103)
+
+weatherAUS_data <- read.csv("weatherAUS.csv", #<- name of the data set.
+                     check.names = FALSE, #<- don't change column names.
+                     stringsAsFactors = FALSE)#<- don't convert the numbers and characters to factors
+
+weatherAUS_data.cleaned <- weatherAUS_data
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[,c(-1,-2)]
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[, which(colMeans(is.na(weatherAUS_data.cleaned)) < 0.3)]
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned[complete.cases(weatherAUS_data.cleaned), ]
+weatherAUS_data.cleaned <- weatherAUS_data.cleaned %>% select(-contains("Dir"))
+
+weatherAUS_data.cleaned$RainToday <- recode(weatherAUS_data.cleaned$RainToday, 'No' = 0, 'Yes' = 1)
+weatherAUS_data.cleaned$RainTomorrow <- recode(weatherAUS_data.cleaned$RainTomorrow, 'No' = 0, 'Yes' = 1)
+
+correlations <- cor(weatherAUS_data.cleaned)
+
+weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)] <- lapply(weatherAUS_data.cleaned[, -ncol(weatherAUS_data.cleaned)],function(x) scale(x))
+
+weatherAUS_data.shortened <- weatherAUS_data.cleaned[1:10000,]
+
+
+#caret function the will allow us to divide the data into test and train, it will randomly assign rows into each category while maintaining the relative balance (0 and 1s) of the target variable. 
+split_index <- createDataPartition(weatherAUS_data.cleaned$RainTomorrow, p = .8, # split 80% - 20% 
+                                  list = FALSE,#output of the data, we don't want a list
+                                  times = 1)#the number of partitions to create we just want one
+
+split_index_shortened <- createDataPartition(weatherAUS_data.shortened$RainTomorrow, p = .8, # split 80% - 20% 
+                                  list = FALSE,#output of the data, we don't want a list
+                                  times = 1)#the number of partitions to create we just want one
+
+
+#then we just pass the index to our dataset
+
+weatherAUS_data_train <- weatherAUS_data.cleaned[split_index,]
+dim(weatherAUS_data_train)
+
+weatherAUS_data_test <- weatherAUS_data.cleaned[-split_index,]
+dim(weatherAUS_data_test)
+
+
+weatherAUS_data_train.shortened <- weatherAUS_data.shortened[split_index_shortened,]
+dim(weatherAUS_data_train)
+
+weatherAUS_data_test.shortened <- weatherAUS_data.shortened[-split_index_shortened,]
+dim(weatherAUS_data_test)
 
 
 ```
+```{r}
+trctrl <- trainControl(method = "repeatedcv",
+                       number = 10,
+                       repeats = 3) # generic control to pass back into the knn mode using the cross validation method. 
+weatherAUS_data_train.shortened$RainTomorrow <- as.factor(weatherAUS_data_train.shortened$RainTomorrow)
+
+weatherAUS_knn_caret <- train(RainTomorrow~.,
+                  data = weatherAUS_data_train.shortened,
+                  method="knn",
+                  tuneLength=5,
+                  trControl= trctrl,#cv method above, will select the optimal K
+                  preProcess="scale") # already did this but helpful reference
+weatherAUS_knn_caret # take a look
+
+```
+```{r}
+
+# KNN Work
+
+weatherAUS_13NN <-  knn(train = weatherAUS_data_train[,-ncol(weatherAUS_data_train)],#<- training set cases
+               test = weatherAUS_data_test[,-ncol(weatherAUS_data_test)],    #<- test set cases
+               cl = weatherAUS_data_train[,"RainTomorrow"],#<- category for true classification
+               k = 13,#<- number of neighbors considered
+               use.all = TRUE,
+               prob = TRUE) #<- control ties between class assignments If true, all distances equal to the kth largest are included
+length(weatherAUS_13NN)
+
+confusionMatrix(as.factor(weatherAUS_13NN), as.factor(weatherAUS_data_test$RainTomorrow), positive = "1", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+
+```
+```{r}
+#In order to use most evaluation packages it's just easier to have are predictions and targets in one place. 
+
+weatherAUS_13NN
+
+weatherAUS_13NN_eval <- data.frame(pred_class=weatherAUS_13NN, pred_prob=1-attr(weatherAUS_13NN,"prob"),target=as.numeric(weatherAUS_data_test$RainTomorrow))
+
+
+str(weatherAUS_13NN_eval)
+
+LogLoss(as.numeric(weatherAUS_13NN_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
+
+
+pred <- prediction(as.numeric(weatherAUS_13NN_eval$pred_prob), as.numeric(weatherAUS_data_test$RainTomorrow))
+
+F1_Score(y_pred = weatherAUS_13NN, y_true = weatherAUS_data_test$RainTomorrow, positive = "1")
+
+
+knn_perf <- performance(pred,"tpr","fpr")
+
+plt <- plot(knn_perf, colorize=TRUE) + abline(a=0, b= 1)
+
+KNN_perf_AUC <- performance(pred,"auc")
+
+print(KNN_perf_AUC@y.values)
+```
+
+
+
+
 
